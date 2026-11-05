@@ -1,6 +1,8 @@
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { insertCapturedStyle, SNAPSHOT_CSP } from "./snapshot-security.mjs";
 
 const usage = "usage: node snapshot.mjs <url of the screen> <out.html> [pass label] [--dark | --light] [--width=1440] [--height=810]";
 const args = process.argv.slice(2);
@@ -35,7 +37,7 @@ try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(600);
-  const html = await page.evaluate(async ([label, scheme]) => {
+  const snapshot = await page.evaluate(async ([label, scheme]) => {
     const LIMIT = 3_000_000;
     const absolute = (value, base = location.href) => {
       try {
@@ -59,9 +61,9 @@ try {
                     reader.onload = () => done(reader.result);
                     reader.readAsDataURL(blob);
                   })
-                : href,
+                : "data:",
             )
-            .catch(() => href),
+            .catch(() => "data:"),
         );
       }
       return inlined.get(href);
@@ -105,7 +107,22 @@ try {
       const selected = images[index].currentSrc;
       if (selected) node.setAttribute("src", selected);
     });
-    copy.querySelectorAll("script, noscript, link[rel='stylesheet'], link[rel='preload'], link[rel='modulepreload'], style").forEach((node) => node.remove());
+    copy.querySelectorAll("script, noscript, link[rel='stylesheet'], link[rel='preload'], link[rel='modulepreload'], style, iframe, frame, frameset, object, embed, base, meta[http-equiv='refresh']").forEach((node) => node.remove());
+    const urlAttributes = new Set(["href", "src", "xlink:href", "action", "formaction", "poster", "data"]);
+    const safeData = /^(?:data:image\/(?:avif|gif|jpe?g|png|webp)|data:font\/(?:woff2?|ttf|otf)|data:(?:audio|video)\/mp4)[;,]/i;
+    for (const node of copy.querySelectorAll("*")) {
+      for (const attribute of [...node.attributes]) {
+        const name = attribute.name.toLowerCase();
+        const compact = attribute.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+        if (name.startsWith("on") || name === "srcdoc" || name === "formaction") {
+          node.removeAttribute(attribute.name);
+          continue;
+        }
+        if (urlAttributes.has(name) && (/^(?:javascript|vbscript):/.test(compact) || (compact.startsWith("data:") && !safeData.test(compact)))) {
+          node.removeAttribute(attribute.name);
+        }
+      }
+    }
     copy.querySelectorAll("[srcset]").forEach((node) => node.removeAttribute("srcset"));
     copy.querySelectorAll("source").forEach((node) => node.remove());
     copy.querySelectorAll("[loading]").forEach((node) => node.removeAttribute("loading"));
@@ -118,7 +135,6 @@ try {
     for (const node of copy.querySelectorAll("[style*='url(']")) {
       node.setAttribute("style", await urls(node.getAttribute("style"), location.href));
     }
-    const style = document.createElement("style");
     let text = css.join("\n");
     if (scheme === "dark" || scheme === "light") {
       const other = scheme === "dark" ? "light" : "dark";
@@ -130,16 +146,52 @@ try {
       meta.content = scheme;
       copy.querySelector("head").prepend(meta);
     }
-    style.textContent = text;
-    copy.querySelector("head").appendChild(style);
     if (label) {
       const meta = document.createElement("meta");
       meta.name = "unslop-pass";
       meta.content = label;
       copy.querySelector("head").prepend(meta);
     }
-    return "<!doctype html>\n" + copy.outerHTML;
+    return { document: "<!doctype html>\n" + copy.outerHTML, css: text };
   }, [label ?? "", scheme]);
+
+  // Treat everything returned by the live page as attacker-controlled data.
+  // Reparse and sanitize it in a fresh page whose DOM prototypes the source
+  // page cannot modify, then insert captured CSS from Node after serialization.
+  const marker = `unslop-captured-style-${randomUUID()}`;
+  const sanitizer = await browser.newPage();
+  let documentHtml;
+  try {
+    documentHtml = await sanitizer.evaluate(([source, marker, csp]) => {
+      const parsed = new DOMParser().parseFromString(String(source), "text/html");
+      const copy = parsed.documentElement;
+      copy.querySelectorAll("script, noscript, link[rel='stylesheet'], link[rel='preload'], link[rel='modulepreload'], style, iframe, frame, frameset, object, embed, base, meta[http-equiv='refresh']").forEach((node) => node.remove());
+      const urlAttributes = new Set(["href", "src", "xlink:href", "action", "formaction", "poster", "data"]);
+      const safeData = /^(?:data:image\/(?:avif|gif|jpe?g|png|webp)|data:font\/(?:woff2?|ttf|otf)|data:(?:audio|video)\/mp4)[;,]/i;
+      for (const node of copy.querySelectorAll("*")) {
+        for (const attribute of [...node.attributes]) {
+          const name = attribute.name.toLowerCase();
+          const compact = attribute.value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+          if (name.startsWith("on") || name === "srcdoc" || name === "formaction") {
+            node.removeAttribute(attribute.name);
+            continue;
+          }
+          if (urlAttributes.has(name) && (/^(?:javascript|vbscript):/.test(compact) || (compact.startsWith("data:") && !safeData.test(compact)))) {
+            node.removeAttribute(attribute.name);
+          }
+        }
+      }
+      const policy = parsed.createElement("meta");
+      policy.httpEquiv = "Content-Security-Policy";
+      policy.content = csp;
+      copy.querySelector("head").prepend(policy);
+      copy.querySelector("head").appendChild(parsed.createComment(marker));
+      return "<!doctype html>\n" + copy.outerHTML;
+    }, [snapshot.document, marker, SNAPSHOT_CSP]);
+  } finally {
+    await sanitizer.close();
+  }
+  const html = insertCapturedStyle(documentHtml, snapshot.css, marker);
   mkdirSync(dirname(resolve(out)), { recursive: true });
   writeFileSync(resolve(out), html);
   await page.evaluate(() => window.scrollTo(0, 0));

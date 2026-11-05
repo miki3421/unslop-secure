@@ -1,5 +1,10 @@
 # unslop
 
+> **Secure fork.** This repository is derived from
+> [heydamir/unslop](https://github.com/heydamir/unslop) under CC BY 4.0.
+> The optional snapshot and story helpers are hardened for local use; see
+> [SECURITY.md](SECURITY.md) for the threat model and compatibility notes.
+
 Created by Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), who started the [Unslopping series](https://x.com/heydamir/status/2115063463063998736) on X.
 
 ![A vibecoded dashboard unslopping itself, frame by frame](skills/unslop/references/refs/story-dashboard-frames.webp)
@@ -11,7 +16,7 @@ unslop is a skill for Claude Code and Codex that turns vibecoded, AI-looking UI 
 For Claude Code, copy the skill into your skills folder.
 
 ```bash
-git clone https://github.com/heydamir/unslop
+git clone https://github.com/miki3421/unslop-secure.git
 mkdir -p ~/.claude/skills && cp -r unslop/skills/unslop ~/.claude/skills/
 ```
 
@@ -20,13 +25,13 @@ For a single project, copy it into `.claude/skills/` inside that project instead
 For Codex, ask it to install the skill straight from this repo.
 
 ```
-$skill-installer install https://github.com/heydamir/unslop/tree/main/skills/unslop
+$skill-installer install https://github.com/miki3421/unslop-secure/tree/main/skills/unslop
 ```
 
 Or copy it by hand into `~/.agents/skills/`, or into `.agents/skills/` inside a single project.
 
 ```bash
-git clone https://github.com/heydamir/unslop
+git clone https://github.com/miki3421/unslop-secure.git
 mkdir -p ~/.agents/skills && cp -r unslop/skills/unslop ~/.agents/skills/
 ```
 

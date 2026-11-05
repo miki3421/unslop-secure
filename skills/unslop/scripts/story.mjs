@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
-import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { createRunCapability, createStoryServer } from "./story-server.mjs";
 
 const usage = "usage: node story.mjs <story.html> <out.mp4> [--wide], or node story.mjs <story.html> --play to watch it live in a browser window";
 const args = process.argv.slice(2);
@@ -34,7 +34,7 @@ try {
   process.exit(1);
 }
 
-const file = resolve(input);
+const file = realpathSync(resolve(input));
 const root = dirname(file);
 const html = readFileSync(file, "utf8");
 const meta = (name) => new RegExp(`<meta\\s+name="${name}"\\s+content="([^"]*)"`, "i").exec(html)?.[1];
@@ -342,21 +342,8 @@ const runtime = `
 })();
 `;
 
-const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".avif": "image/avif", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".woff": "font/woff", ".mp4": "video/mp4" };
-const server = createServer((request, response) => {
-  const path = decodeURIComponent(new URL(request.url, "http://local").pathname);
-  if (path === "/__stage.html") {
-    response.writeHead(200, { "content-type": "text/html" });
-    return response.end(stage);
-  }
-  const target = normalize(join(root, path.replace(/^\/__story\//, "/")));
-  if (!target.startsWith(root) || !existsSync(target)) {
-    response.writeHead(404);
-    return response.end();
-  }
-  response.writeHead(200, { "content-type": types[extname(target).toLowerCase()] ?? "application/octet-stream" });
-  response.end(readFileSync(target));
-});
+const capability = createRunCapability();
+const server = createStoryServer({ root, stage, capability });
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -375,6 +362,9 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, Math.max(0, ms)));
 let total = 0;
 try {
   const page = await browser.newPage(play ? { viewport: { width: Math.round(FRAME.width * VIEW), height: Math.round(FRAME.height * VIEW) } } : { viewport: FRAME, deviceScaleFactor: 2 });
+  await page.route(`${base}/**`, (route) => route.continue({
+    headers: { ...route.request().headers(), "x-unslop-capability": capability },
+  }));
   await page.goto(`${base}/__stage.html`, { waitUntil: "networkidle" });
   const frame = page.frames().find((item) => item !== page.mainFrame());
   await frame.waitForLoadState("networkidle");
