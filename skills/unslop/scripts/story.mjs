@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
-import { createRunCapability, createStoryServer } from "./story-server.mjs";
+import { authorizeStoryPage, createRunCapability, createStoryServer } from "./story-server.mjs";
 
 const usage = "usage: node story.mjs <story.html> <out.mp4> [--wide], or node story.mjs <story.html> --play to watch it live in a browser window";
 const args = process.argv.slice(2);
@@ -362,9 +362,7 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, Math.max(0, ms)));
 let total = 0;
 try {
   const page = await browser.newPage(play ? { viewport: { width: Math.round(FRAME.width * VIEW), height: Math.round(FRAME.height * VIEW) } } : { viewport: FRAME, deviceScaleFactor: 2 });
-  await page.route(`${base}/**`, (route) => route.continue({
-    headers: { ...route.request().headers(), "x-unslop-capability": capability },
-  }));
+  await authorizeStoryPage(page, base, capability);
   await page.goto(`${base}/__stage.html`, { waitUntil: "networkidle" });
   const frame = page.frames().find((item) => item !== page.mainFrame());
   await frame.waitForLoadState("networkidle");

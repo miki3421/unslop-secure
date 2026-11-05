@@ -22,6 +22,12 @@ export function createRunCapability() {
   return randomBytes(32).toString("hex");
 }
 
+export async function authorizeStoryPage(page, base, capability) {
+  await page.route(`${base}/**`, (route) => route.continue({
+    headers: { ...route.request().headers(), "x-unslop-capability": capability },
+  }));
+}
+
 function deny(response, status) {
   response.writeHead(status, {
     "cache-control": "no-store",
